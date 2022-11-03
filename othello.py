@@ -157,22 +157,33 @@ class Board:
 class DecisionTree:
     MAX_DEPTH = 4
     def __init__(self, board_state, depth = 0):
-        self.nodes = []
-        self.state = board_state.copy()
+        self.nodes = {}
+        self.state = board_state
         if depth >= DecisionTree.MAX_DEPTH:
             self.empty = True
         else:
             self.empty = False
-            for (i, j) in cartesian_product(TILE_NUM):
-                board = board_state.copy()
-                legal = board.place(i, j)
-                if legal:
-                    board.switch_stone()
-                    self.nodes.append(((i, j), DecisionTree(board, depth+1)))
-            copy_state = board_state.copy()
-            copy_state.stone = copy_state.stone.inverse()
-            self.nodes.append(((-1, -1), DecisionTree(copy_state, depth+1))) # = pass your turn
-    
+            self.generate_childs(depth)
+
+    def generate_childs(self, depth):
+        for (i, j) in cartesian_product(TILE_NUM):
+            board = self.state.copy()
+            legal = board.place(i, j)
+            if legal:
+                board.switch_stone()
+                self.nodes[(i, j)] = DecisionTree(board, depth+1)
+        copy_state = self.state.copy()
+        copy_state.switch_stone()
+        self.nodes[(-1, -1)] = DecisionTree(copy_state, depth+1) # = pass your turn
+
+    def recalculate(self, depth = 0):
+        if not self.empty:
+            for (_, node) in self.nodes.items():
+                node.recalculate(depth + 1)
+        else:
+            self.empty = False
+            self.generate_childs(depth)
+
     def minimax(self, maximizing_stone):
         if self.empty:
             return self.state.num[maximizing_stone], []
@@ -182,7 +193,7 @@ class DecisionTree:
         next_moves = []
         if self.state.stone == maximizing_stone:
             value = -inf
-            for move, node in self.nodes:
+            for move, node in self.nodes.items():
                 minimax_value, minimax_next_moves = node.minimax(maximizing_stone)
                 if value < minimax_value:
                     value = minimax_value
@@ -190,7 +201,7 @@ class DecisionTree:
                     next_moves = minimax_next_moves
         else:
             value = inf
-            for move, node in self.nodes:
+            for move, node in self.nodes.items():
                 minimax_value, minimax_next_moves = node.minimax(maximizing_stone)
                 if value > minimax_value:
                     value = minimax_value
@@ -273,6 +284,8 @@ board.set(Stone.BLACK, 3, 4)
 board.set(Stone.BLACK, 4, 3)
 board.generate_legal_moves()
 
+tree = DecisionTree(board.copy())
+
 def click(x, y):
     tx, ty = world_to_tile(x, y)
     
@@ -283,14 +296,18 @@ def click(x, y):
     board.switch_stone()
     draw_board()
     
-    tree = DecisionTree(board)
+    global tree
+    tree = tree.nodes[(tx, ty)]
+    tree.recalculate() # Regenerate the last layer of the tree
 
     value, next_moves = tree.minimax(Stone.BLACK)
     tx, ty = next_moves[-1]
     if tx != -1 and ty != -1:
-        board.place(tx, ty) # = pass
+        board.place(tx, ty) 
     board.switch_stone()
     draw_board()
+
+    tree = tree.nodes[(tx, ty)] # Set the top of the tree to be my moves (but no need to recalculate)
 
 def draw_board():
     def black_circle(size):
