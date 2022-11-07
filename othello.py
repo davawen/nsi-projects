@@ -1,4 +1,6 @@
 import turtle as t
+import sys
+import cProfile
 from time import sleep
 from enum import Enum
 from math import copysign, inf
@@ -17,10 +19,8 @@ class Stone(Enum):
     def inverse(self):
         return Stone.BLACK if self == Stone.WHITE else Stone.WHITE
 
-"""
-Creates an iterator over the 2d range [(0, 0); (w, h))
-"""
 def cartesian_product(w, h = None):
+    """Creates an iterator over the 2d range [(0, 0); (w, h))"""
     if h == None:
         h = w
 
@@ -35,7 +35,9 @@ class Board:
         # The stone of the currently playing player
         self.stone = starting_stone 
         # Set of all legal moves for the current stone, key has form (x, y)
-        self.legal_moves = set() 
+        self.legal_moves = set()
+        # Did the other player have any move to their disposition before this turn?
+        self.last_could_move = True
     
     def copy(self):
         b = Board(self.stone)
@@ -45,6 +47,7 @@ class Board:
         return b
     
     def set(self, stone, tx, ty):
+        """Sets the given tile in the board to the given value, while keeping track of the number of different stones"""
         present = self.get(tx, ty)
         if present == None:
             self.num[stone] += 1
@@ -56,28 +59,42 @@ class Board:
     def get(self, tx, ty):
         return self.board[ty][tx]
 
-    """
-    Switch the current player and regenerate the legal moves for the new one
-    """
     def switch_stone(self):
+        """Switch the current player and regenerate the legal moves for the new one"""
+        self.last_could_move = (len(self.legal_moves) != 0) 
+        
         self.stone = self.stone.inverse()
         self.generate_legal_moves()
     
-    """
-    Creates an iterator over every tile on the board in the form (stone, tx, ty)
-    """
+    def is_game_finished(self):
+        """
+        Checks if there aren't any new move possible on the board
+        @returns False if the game is still going, the stone that won if one did, or None if there was a tie
+        """
+        # If either player can still move
+        if self.last_could_move or len(self.legal_moves) != 0:
+            return False
+        
+        if self.num[Stone.BLACK] > self.num[Stone.WHITE]:
+            return Stone.BLACK
+        elif self.num[Stone.BLACK] < self.num[Stone.WHITE]:
+            return Stone.WHITE
+        else:
+            return None
+    
     def tiles(self):
+        """Creates an iterator over every tile on the board in the form (stone, tx, ty)"""
         for (i, j) in cartesian_product(TILE_NUM):
             yield (self.get(i, j), i, j)
     
     def in_bounds(self, tx, ty):
         return tx >= 0 and tx < TILE_NUM and ty >= 0 and ty < TILE_NUM
 
-    """
-    Check if a tile is possible to play on in a certain direction
-    Returns None if it isn't, or a (x, y) tuple of the first allied stone in that direction
-    """
     def peek_dir(self, stone, tx, ty, dirx, diry):
+        """
+        Check if a tile is possible to play on in a certain direction
+        @returns None if it isn't, or a (x, y) tuple of the first allied stone in that direction
+        """
         if self.in_bounds(tx + dirx, ty + diry) and self.get(tx + dirx, ty + diry) == stone.inverse():
             x = tx + dirx
             y = ty + diry
@@ -90,11 +107,11 @@ class Board:
                 y += diry
         return None
 
-    """
-    Returns True if the move is authorized by the game's rules, False if it isn't
-    TODO: Switch every statement which expected this to return wether the move was `illegal`
-    """
     def is_legal(self, stone, tx, ty):
+        """
+        Returns True if the move is authorized by the game's rules, False if it isn't
+        DONE: Switch every statement which expected this to return wether the move was `illegal`
+        """
         if self.get(tx, ty) != None:
             return False
         
@@ -113,13 +130,13 @@ class Board:
             for i in range(TILE_NUM):
                 if self.is_legal(self.stone, i, j):
                     self.legal_moves.add((i, j))
-    
-    """
-    Fills a line of stones from (tx, ty) to (plugx, plugy) with the given direction (dirx, diry).
-    The coordinates should be aligned.
-    dirx and diry shall either be 1, 0, or -1.
-    """
+                    
     def fill_dir(self, stone, tx, ty, dirx, diry, plugx, plugy):
+        """
+        Fills a line of stones from (tx, ty) to (plugx, plugy) with the given direction (dirx, diry).
+        The coordinates should be aligned.
+        dirx and diry shall either be 1, 0, or -1.
+        """
         assert(dirx == 1 or dirx == 0 or dirx == -1)
         assert(diry == 1 or diry == 0 or diry == -1)
 
@@ -136,11 +153,11 @@ class Board:
                 y += diry
         self.set(stone, tx, ty)
     
-    """
-    Places the current playing stone at a given position and applies every effect needed to the board
-    Returns wether the move was applied (if it was in the legal moves)
-    """
     def place(self, tx, ty):
+        """
+        Places the current playing stone at a given position and applies every effect needed to the board
+        @returns wether the move was applied (if it was in the legal moves)
+        """
         if (tx, ty) not in self.legal_moves:
             return False
         
@@ -236,6 +253,7 @@ class DecisionTree:
             node.dump(file, depth + 1)
 
 def build():
+    """Creates the framework of the board at the start of the game"""
     t.setundobuffer(800)
     t.setup(SCREEN_SIZE, SCREEN_SIZE)
     t.setworldcoordinates(0, SCREEN_SIZE, SCREEN_SIZE, 0)
@@ -285,6 +303,7 @@ board.set(Stone.BLACK, 4, 3)
 board.generate_legal_moves()
 
 tree = DecisionTree(board.copy())
+human_player = False
 
 def click(x, y):
     tx, ty = world_to_tile(x, y)
@@ -296,19 +315,36 @@ def click(x, y):
     board.switch_stone()
     draw_board()
     
-    global tree
-    tree = tree.nodes[(tx, ty)]
-    tree.recalculate() # Regenerate the last layer of the tree
+    # In mode versus, next click would be the other player
+    if not human_player:
+        global tree
+        tree = tree.nodes[(tx, ty)]
+        tree.recalculate() # Regenerate the last layer of the tree
 
-    value, next_moves = tree.minimax(Stone.BLACK)
-    tx, ty = next_moves[-1]
-    if tx != -1 and ty != -1:
-        board.place(tx, ty) 
-    board.switch_stone()
-    draw_board()
+        value, next_moves = tree.minimax(Stone.BLACK)
+        tx, ty = next_moves[-1]
+        if tx != -1 and ty != -1:
+            board.place(tx, ty) 
+        board.switch_stone()
+        draw_board()
 
-    tree = tree.nodes[(tx, ty)] # Set the top of the tree to be my moves (but no need to recalculate)
-
+        tree = tree.nodes[(tx, ty)] # Move the tree to my move (but no need to recalculate as long as MAX_DEPTH is > than 1)
+    
+    end = board.is_game_finished()
+    if end != False:
+        if end == Stone.BLACK:
+            text = "Gagnant: joueur noir"
+        elif end == Stone.WHITE:
+            text = "Gagnant: joueur blanc"
+        else:
+            text = "Pas de gagnant: égalité!"
+        t.goto(SCREEN_SIZE/2, 20)
+        t.pd()
+        t.color("black")
+        t.write(text, align="center", font=("Arial", 20, "normal"))
+        sleep(4)
+        t.bye()
+        
 def draw_board():
     def black_circle(size):
         t.pd()
@@ -352,6 +388,12 @@ def draw_board():
     t.update()
 
 def main():
+    # Pass game mode as command line argument
+    if len(sys.argv) >= 2:
+        if sys.argv[1] == "versus":
+            global human_player
+            human_player = True
+    
     build()
     draw_board()
     
