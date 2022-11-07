@@ -173,37 +173,26 @@ class Board:
 
 class DecisionTree:
     MAX_DEPTH = 4
-    def __init__(self, board_state, depth = 0):
+    def __init__(self, board_state):
         self.nodes = {}
         self.state = board_state
-        if depth >= DecisionTree.MAX_DEPTH:
-            self.empty = True
-        else:
-            self.empty = False
-            self.generate_childs(depth)
-
-    def generate_childs(self, depth):
+        
+    def generate_childs(self):
         for (i, j) in cartesian_product(TILE_NUM):
             board = self.state.copy()
             legal = board.place(i, j)
             if legal:
                 board.switch_stone()
-                self.nodes[(i, j)] = DecisionTree(board, depth+1)
+                self.nodes[(i, j)] = DecisionTree(board)
         copy_state = self.state.copy()
         copy_state.switch_stone()
-        self.nodes[(-1, -1)] = DecisionTree(copy_state, depth+1) # = pass your turn
+        self.nodes[(-1, -1)] = DecisionTree(copy_state) # = pass your turn
 
-    def recalculate(self, depth = 0):
-        if not self.empty:
-            for (_, node) in self.nodes.items():
-                node.recalculate(depth + 1)
-        else:
-            self.empty = False
-            self.generate_childs(depth)
-
-    def minimax(self, maximizing_stone):
-        if self.empty:
+    def minimax(self, maximizing_stone, alpha = -inf, beta = inf, depth = 0):
+        if depth >= DecisionTree.MAX_DEPTH:
             return self.state.num[maximizing_stone], []
+        
+        self.generate_childs()
         
         value = 0
         value_move = (-1, -1)
@@ -211,46 +200,27 @@ class DecisionTree:
         if self.state.stone == maximizing_stone:
             value = -inf
             for move, node in self.nodes.items():
-                minimax_value, minimax_next_moves = node.minimax(maximizing_stone)
+                minimax_value, minimax_next_moves = node.minimax(maximizing_stone, alpha, beta, depth + 1)
                 if value < minimax_value:
                     value = minimax_value
                     value_move = move
                     next_moves = minimax_next_moves
+                if value >= beta:
+                    break
+                alpha = max(alpha, value)
         else:
             value = inf
             for move, node in self.nodes.items():
-                minimax_value, minimax_next_moves = node.minimax(maximizing_stone)
+                minimax_value, minimax_next_moves = node.minimax(maximizing_stone, alpha, beta, depth + 1)
                 if value > minimax_value:
                     value = minimax_value
                     value_move = move
                     next_moves = minimax_next_moves
+                if value <= alpha:
+                    break
+                beta = min(beta, value)
         next_moves.append(value_move)
         return value, next_moves
-    
-    def dump(self, file, depth = 0):
-        space = "    " * depth
-        for (tx, ty), node in self.nodes:
-            s = f"{space}Move: ({tx}, {ty}), Blacks: {node.state.num[Stone.BLACK]}, Whites: {node.state.num[Stone.WHITE]}, State:\n"
-            for j in range(TILE_NUM):
-                s += space
-                for i in range(TILE_NUM):
-                    t = node.state.get(i, j)
-                    if t == None:
-                        s += "` "
-                    elif t == Stone.BLACK:
-                        if i == tx and j == ty:
-                            s += "b "
-                        else:
-                            s += "# "
-                    else:
-                        if i == tx and j == ty:
-                            s += "w "
-                        else:
-                            s += "o "
-                s += "\n"
-            s += "\n"
-            file.write(s)
-            node.dump(file, depth + 1)
 
 def build():
     """Creates the framework of the board at the start of the game"""
@@ -302,7 +272,7 @@ board.set(Stone.BLACK, 3, 4)
 board.set(Stone.BLACK, 4, 3)
 board.generate_legal_moves()
 
-tree = DecisionTree(board.copy())
+#tree = DecisionTree(board.copy())
 human_player = False
 
 def click(x, y):
@@ -317,18 +287,16 @@ def click(x, y):
     
     # In mode versus, next click would be the other player
     if not human_player:
-        global tree
-        tree = tree.nodes[(tx, ty)]
-        tree.recalculate() # Regenerate the last layer of the tree
-
-        value, next_moves = tree.minimax(Stone.BLACK)
+        tree = DecisionTree(board.copy())
+        
+        value, next_moves = tree.minimax(board.stone)
         tx, ty = next_moves[-1]
         if tx != -1 and ty != -1:
             board.place(tx, ty) 
         board.switch_stone()
         draw_board()
 
-        tree = tree.nodes[(tx, ty)] # Move the tree to my move (but no need to recalculate as long as MAX_DEPTH is > than 1)
+        #tree = tree.nodes[(tx, ty)] # Move the tree to my move (but no need to recalculate as long as MAX_DEPTH is > than 1)
     
     end = board.is_game_finished()
     if end != False:
@@ -403,3 +371,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
